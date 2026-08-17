@@ -44,17 +44,60 @@ flowchart LR
     Client[Client / API Consumer] --> ALB[Application Load Balancer]
     ALB --> ECS[ECS Service / Fargate]
     ECS --> Task[Spring Boot Container]
-    Task --> Health[/health]
     Task --> Orders[/orders]
+    Task --> Documents[/orders/{id}/documents]
+    Task --> Health[/health]
+    Task --> EventFlow[OrderCreated event / SQS-ready flow]
+    EventFlow --> Worker[Async order processor]
     Task --> Logs[CloudWatch Logs]
 ```
 
 This is the same order lifecycle used elsewhere in the repository:
 
 - customer creates an order
-- the API stores the order
-- the app exposes order state via REST
-- later labs can add PostgreSQL, S3, and SQS around the same platform
+- the API persists the order and emits an order-created event
+- the application can attach order documents, modeling the S3 upload pattern
+- the queue/event flow allows downstream order processing after the API responds
+- the same app is now running in ECS/Fargate behind an ALB
+
+## Order lifecycle in this repository
+
+The ECS deployment is not a disconnected exercise. It is the same production flow the repository teaches across multiple labs:
+
+```text
+Create order -> save order record -> upload invoice to S3 -> emit order-created event -> process asynchronously via SQS -> update order status -> observe in ECS logs
+```
+
+In a full production setup, the flow becomes:
+
+- API receives order request
+- order is stored in PostgreSQL
+- documents are uploaded to S3
+- a message is enqueued in SQS for downstream processing
+- a worker consumes the queue and updates the order
+- ECS exposes the service through ALB and CloudWatch
+
+## Local order flow examples
+
+```bash
+curl -X POST http://localhost:8080/orders \
+  -H "Content-Type: application/json" \
+  -d '{"customerId":"customer-123","product":"laptop","quantity":2,"totalAmount":2499.99}'
+
+curl -X POST "http://localhost:8080/orders/1/documents" \
+  -F "file=@invoice.pdf"
+
+curl -X PUT http://localhost:8080/orders/1/status \
+  -H "Content-Type: application/json" \
+  -d '{"status":"PAID"}'
+```
+
+These requests mirror the real cloud architecture:
+
+- create order in the API
+- upload a supporting document via the same app
+- move order state through a lifecycle
+- prepare the app for container deployment where the same API becomes a managed ECS service
 
 ## Prerequisites
 
@@ -202,13 +245,22 @@ curl http://<ALB-DNS>/health
 curl http://<ALB-DNS>/orders
 ```
 
-Then create an order against the live deployment:
+Then run the end-to-end order lifecycle against the live deployment:
 
 ```bash
 curl -X POST http://<ALB-DNS>/orders \
   -H "Content-Type: application/json" \
   -d '{"customerId":"customer-aws","product":"monitor","quantity":1,"totalAmount":799.00}'
+
+curl -X POST "http://<ALB-DNS>/orders/1/documents" \
+  -F "file=@invoice.pdf"
+
+curl -X PUT http://<ALB-DNS>/orders/1/status \
+  -H "Content-Type: application/json" \
+  -d '{"status":"PAID"}'
 ```
+
+This is the same lifecycle the repo teaches across the S3 and SQS labs, just now deployed through ECS/Fargate instead of a local app process.
 
 ## Deployment scripts
 
