@@ -1,7 +1,7 @@
 package com.example.platform;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -15,11 +15,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest
 @AutoConfigureMockMvc
-class OrderStatusControllerTest {
+class OrderIntegrationFlowTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -36,24 +37,30 @@ class OrderStatusControllerTest {
     }
 
     @Test
-    void shouldUpdateOrderStatus() throws Exception {
-        String createBody = objectMapper.writeValueAsString(
-                new CreateOrderRequest("customer-777", "monitor", 1, new BigDecimal("799.00")));
+    void shouldUploadOrderDocumentForExistingOrder() throws Exception {
+        String orderJson = objectMapper.writeValueAsString(
+                new CreateOrderRequest("customer-s3", "server", 1, new BigDecimal("1299.00")));
 
-        String createdResponse = mockMvc.perform(post("/orders")
+        String orderResponse = mockMvc.perform(post("/orders")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(createBody))
+                        .content(orderJson))
                 .andExpect(status().isCreated())
                 .andReturn()
                 .getResponse()
                 .getContentAsString();
 
-        Long orderId = objectMapper.readTree(createdResponse).get("id").asLong();
+        Long orderId = objectMapper.readTree(orderResponse).get("id").asLong();
 
-        mockMvc.perform(put("/orders/{id}/status", orderId)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"status\":\"PAID\"}"))
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "invoice.pdf",
+                "application/pdf",
+                "invoice-bytes".getBytes());
+
+        mockMvc.perform(multipart("/orders/{id}/documents", orderId)
+                        .file(file))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("PAID"));
+                .andExpect(jsonPath("$.orderId").value(orderId))
+                .andExpect(jsonPath("$.fileName").value("invoice.pdf"));
     }
 }
